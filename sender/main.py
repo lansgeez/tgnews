@@ -9,12 +9,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import (
-    FSInputFile,
-    MessageEntity,
-    InputMediaPhoto,
-    InputMediaVideo,
-)
+from aiogram.types import FSInputFile, MessageEntity, InputMediaPhoto, InputMediaVideo
 from kafka import KafkaConsumer
 from kafka.errors import NoBrokersAvailable
 
@@ -22,9 +17,6 @@ from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 import config
 
-# ---------------------------------------------------------------------------
-# ENV / CONFIG
-# ---------------------------------------------------------------------------
 SERVICE_NAME = os.getenv("SERVICE_NAME", "sender")
 METRICS_PORT = int(os.getenv("METRICS_PORT", "9102"))
 
@@ -34,69 +26,31 @@ RATE_LIMIT = int(os.getenv("RATE_LIMIT_SECONDS", "30"))  # sec
 ALBUM_TIMEOUT = float(os.getenv("ALBUM_TIMEOUT_SECONDS", "2.0"))  # sec
 FILE_WAIT_TIMEOUT = int(os.getenv("FILE_WAIT_TIMEOUT_SECONDS", "15"))  # sec
 
-# ---------------------------------------------------------------------------
-# LOGGING -> stdout for docker logs
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     handlers=[logging.StreamHandler()],
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
-# ---------------------------------------------------------------------------
-# PROMETHEUS METRICS
-# ---------------------------------------------------------------------------
-S_CONSUME = Counter(
-    "tgnews_sender_consume_total",
-    "Consumed kafka messages",
-    ["kind"],
-)
-S_SEND = Counter(
-    "tgnews_sender_send_total",
-    "Telegram sends",
-    ["type", "status"],
-)
-S_ALBUM_FLUSH = Counter(
-    "tgnews_sender_album_flush_total",
-    "Album flushes",
-    ["status"],
-)
-S_RATE_WAIT = Counter(
-    "tgnews_sender_rate_limit_wait_seconds_total",
-    "Seconds waited by rate limit",
-)
-S_FILE_WAIT_FAIL = Counter(
-    "tgnews_sender_file_wait_fail_total",
-    "File wait failures",
-)
-S_FILE_WAIT_SECONDS = Histogram(
-    "tgnews_sender_file_wait_seconds",
-    "Seconds spent waiting for files",
-)
-S_LAST_TS = Gauge(
-    "tgnews_sender_last_event_timestamp",
-    "Unix timestamp of last processed kafka message",
-)
+S_CONSUME = Counter("tgnews_sender_consume_total", "Consumed kafka messages", ["kind"])
+S_SEND = Counter("tgnews_sender_send_total", "Telegram sends", ["type", "status"])
+S_ALBUM_FLUSH = Counter("tgnews_sender_album_flush_total", "Album flushes", ["status"])
+S_RATE_WAIT = Counter("tgnews_sender_rate_limit_wait_seconds_total", "Seconds waited by rate limit")
+S_FILE_WAIT_FAIL = Counter("tgnews_sender_file_wait_fail_total", "File wait failures")
+S_FILE_WAIT_SECONDS = Histogram("tgnews_sender_file_wait_seconds", "Seconds spent waiting for files")
+S_LAST_TS = Gauge("tgnews_sender_last_event_timestamp", "Unix timestamp of last processed kafka message")
 
-# ---------------------------------------------------------------------------
-# TELEGRAM BOT
-# ---------------------------------------------------------------------------
+if not config.TELEGRAM_TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN is not set (check .env / docker-compose environment)")
+
 bot = Bot(token=config.TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-# ---------------------------------------------------------------------------
-# RATE LIMIT
-# ---------------------------------------------------------------------------
 _LAST_SEND_TIME = 0.0
 _send_lock = asyncio.Lock()
 
-
 async def send_limited(fn, *args, **kwargs):
-    """
-    Global rate limit: no more than 1 Telegram send per RATE_LIMIT seconds.
-    """
     global _LAST_SEND_TIME
-
     async with _send_lock:
         now = time.time()
         if now - _LAST_SEND_TIME < RATE_LIMIT:
@@ -106,18 +60,9 @@ async def send_limited(fn, *args, **kwargs):
             await asyncio.sleep(wait)
 
         _LAST_SEND_TIME = time.time()
-
         return await fn(*args, **kwargs)
 
-
-# ---------------------------------------------------------------------------
-# FILE WAIT
-# ---------------------------------------------------------------------------
 async def wait_for_file(path: str, timeout_seconds: int = FILE_WAIT_TIMEOUT) -> bool:
-    """
-    Wait for file to exist, be non-empty and "stable" (size stops changing briefly).
-    This reduces chance of reading half-written files.
-    """
     t0 = time.time()
     try:
         last_size = -1
@@ -138,7 +83,6 @@ async def wait_for_file(path: str, timeout_seconds: int = FILE_WAIT_TIMEOUT) -> 
                         stable_ticks = 0
                         last_size = size
 
-                    # ~0.3 sec stable
                     if stable_ticks >= 3:
                         return True
 
@@ -149,18 +93,8 @@ async def wait_for_file(path: str, timeout_seconds: int = FILE_WAIT_TIMEOUT) -> 
     finally:
         S_FILE_WAIT_SECONDS.observe(time.time() - t0)
 
-
-# ---------------------------------------------------------------------------
-# ENTITIES: Telethon(dict) -> Aiogram(MessageEntity)
-# ---------------------------------------------------------------------------
 def convert_telethon_entities(telethon_entities):
-    """
-    Parser sends entities:
-      [{"offset":.., "length":.., "type":"MessageEntityBold", "url":...}, ...]
-    Convert to Aiogram MessageEntity list.
-    """
     aiogram_entities: List[MessageEntity] = []
-
     for ent in telethon_entities or []:
         if not isinstance(ent, dict):
             continue
@@ -172,17 +106,8 @@ def convert_telethon_entities(telethon_entities):
             aiogram_type = "strikethrough"
 
         supported = {
-            "bold",
-            "italic",
-            "code",
-            "pre",
-            "underline",
-            "strikethrough",
-            "spoiler",
-            "text_link",
-            "text_mention",
-            "blockquote",
-            "url",
+            "bold", "italic", "code", "pre", "underline", "strikethrough",
+            "spoiler", "text_link", "text_mention", "blockquote", "url",
         }
         if aiogram_type not in supported:
             continue
@@ -202,7 +127,6 @@ def convert_telethon_entities(telethon_entities):
 
     return aiogram_entities
 
-
 def postfix_kind(postfix: str) -> str:
     postfix = (postfix or "").lower()
     if postfix in [".jpg", ".jpeg", ".png", ".webp"]:
@@ -210,13 +134,9 @@ def postfix_kind(postfix: str) -> str:
     if postfix in [".mp4", ".mov"]:
         return "video"
     if postfix in [".gif"]:
-        return "video"  # Telegram treats gifs as animations; send_video usually works
+        return "video"
     return "other"
 
-
-# ---------------------------------------------------------------------------
-# ALBUM BUFFERING
-# ---------------------------------------------------------------------------
 @dataclass
 class AlbumItem:
     msg_id: int
@@ -225,17 +145,11 @@ class AlbumItem:
     text: str
     entities: List[MessageEntity]
 
-
 album_buffer: Dict[str, List[AlbumItem]] = defaultdict(list)
 album_timers: Dict[str, asyncio.Task] = {}
-album_last_seen: Dict[str, float] = {}  # for extendable timer
-
+album_last_seen: Dict[str, float] = {}
 
 async def extendable_album_timer(group_key: str, target_channel: str):
-    """
-    Wait until ALBUM_TIMEOUT seconds pass after the *last* item was seen,
-    then flush the album. This prevents cutting albums when items arrive slowly.
-    """
     try:
         while True:
             last = album_last_seen.get(group_key, time.time())
@@ -249,22 +163,18 @@ async def extendable_album_timer(group_key: str, target_channel: str):
         return
     except Exception:
         logging.exception(f"Album timer crashed for {group_key}")
-        # try cleanup state to avoid leaks
         safe_cleanup_album_state(group_key)
-
 
 async def send_album(group_key: str, target_channel: str):
     items = album_buffer.get(group_key, [])
     if not items:
         return
 
-    # stable order
     try:
         items.sort(key=lambda x: x.msg_id)
     except Exception:
         pass
 
-    # Choose which item carries caption: first with non-empty text
     caption_idx: Optional[int] = None
     for i, it in enumerate(items):
         if (it.text or "").strip():
@@ -277,8 +187,6 @@ async def send_album(group_key: str, target_channel: str):
     caption_entities = items[caption_idx].entities or []
 
     media_group = []
-
-    # Build media, but caption+entities only on that one element, and only if caption != ""
     for i, it in enumerate(items):
         kind = postfix_kind(it.postfix)
 
@@ -292,32 +200,23 @@ async def send_album(group_key: str, target_channel: str):
         cap_entities = caption_entities if is_caption_item else None
 
         if kind == "photo":
-            if is_caption_item:
-                media_group.append(
-                    InputMediaPhoto(
-                        media=FSInputFile(it.path),
-                        caption=cap,
-                        caption_entities=cap_entities,
-                    )
+            media_group.append(
+                InputMediaPhoto(
+                    media=FSInputFile(it.path),
+                    caption=cap,
+                    caption_entities=cap_entities,
                 )
-            else:
-                media_group.append(InputMediaPhoto(media=FSInputFile(it.path)))
-
+            )
         elif kind == "video":
-            if is_caption_item:
-                media_group.append(
-                    InputMediaVideo(
-                        media=FSInputFile(it.path),
-                        caption=cap,
-                        caption_entities=cap_entities,
-                    )
+            media_group.append(
+                InputMediaVideo(
+                    media=FSInputFile(it.path),
+                    caption=cap,
+                    caption_entities=cap_entities,
                 )
-            else:
-                media_group.append(InputMediaVideo(media=FSInputFile(it.path)))
-
+            )
         else:
             logging.warning(f"⚠ Unsupported album item: postfix={it.postfix} path={it.path}")
-            continue
 
     if not media_group:
         logging.error(f"⚠ Album {group_key} has no sendable items.")
@@ -335,24 +234,18 @@ async def send_album(group_key: str, target_channel: str):
         logging.exception(f"❌ Album send error for {group_key}")
         S_ALBUM_FLUSH.labels(status="error").inc()
         S_SEND.labels(type="album", status="error").inc()
-        # keep files for debugging
         safe_cleanup_album_state(group_key)
         return
 
     cleanup_album_files(items)
     safe_cleanup_album_state(group_key)
 
-
 def cleanup_album_files(items: List[AlbumItem]):
     for it in items:
         try:
             os.remove(it.path)
-        except FileNotFoundError:
-            pass
         except Exception:
             pass
-
-    # remove folder if empty
     try:
         folder = os.path.dirname(items[0].path)
         if os.path.isdir(folder) and not os.listdir(folder):
@@ -360,11 +253,9 @@ def cleanup_album_files(items: List[AlbumItem]):
     except Exception:
         pass
 
-
 def safe_cleanup_album_state(group_key: str):
     album_buffer.pop(group_key, None)
     album_last_seen.pop(group_key, None)
-
     t = album_timers.pop(group_key, None)
     if t:
         try:
@@ -372,14 +263,10 @@ def safe_cleanup_album_state(group_key: str):
         except Exception:
             pass
 
-
-# ---------------------------------------------------------------------------
-# KAFKA CONSUMER (RETRY)
-# ---------------------------------------------------------------------------
 async def create_consumer():
     while True:
         try:
-            logging.info(f"🔄 [{SERVICE_NAME}] Connecting to Kafka: {config.KAFKA_BOOTSTRAP_SERVERS}")
+            logging.info(f"🔄 [{SERVICE_NAME}] Connecting to Kafka: {config.KAFKA_BOOTSTRAP_SERVERS} topic={config.KAFKA_TOPIC}")
             consumer = KafkaConsumer(
                 config.KAFKA_TOPIC,
                 bootstrap_servers=config.KAFKA_BOOTSTRAP_SERVERS,
@@ -394,10 +281,6 @@ async def create_consumer():
             logging.warning(f"❌ [{SERVICE_NAME}] Kafka not ready. Retry in 3s...")
             await asyncio.sleep(3)
 
-
-# ---------------------------------------------------------------------------
-# MAIN LOOP
-# ---------------------------------------------------------------------------
 async def kafka_consume():
     consumer = await create_consumer()
     target_channel = config.TARGET_CHANNEL
@@ -417,33 +300,23 @@ async def kafka_consume():
             has_media = bool(data.get("has_media", False))
             postfix = data.get("postfix")
 
-            # -------- TEXT ONLY --------
             if (not has_media) or (not postfix):
                 S_CONSUME.labels(kind="text").inc()
                 try:
-                    await send_limited(
-                        bot.send_message,
-                        target_channel,
-                        text=text,
-                        entities=entities,
-                    )
+                    await send_limited(bot.send_message, target_channel, text=text, entities=entities)
                     S_SEND.labels(type="message", status="ok").inc()
                 except Exception:
                     logging.exception("❌ send_message error")
                     S_SEND.labels(type="message", status="error").inc()
                 continue
 
-            # -------- MEDIA PATH --------
             folder_suffix = grouped_id if grouped_id is not None else "single"
             folder = os.path.join(DOWNLOADS_DIR, f"{channel_id}_{folder_suffix}")
             path = os.path.join(folder, f"{msg_id}{postfix}")
 
-            # -------- ALBUM ITEM --------
             if grouped_id is not None:
                 S_CONSUME.labels(kind="album_item").inc()
                 group_key = f"{channel_id}_{grouped_id}"
-
-                logging.info(f"📸 Album item msg_id={msg_id} group={grouped_id} path={path}")
 
                 album_buffer[group_key].append(
                     AlbumItem(
@@ -454,20 +327,16 @@ async def kafka_consume():
                         entities=entities,
                     )
                 )
-
                 album_last_seen[group_key] = time.time()
 
-                # start timer once; it will extend based on album_last_seen
                 if group_key not in album_timers:
                     album_timers[group_key] = asyncio.create_task(
                         extendable_album_timer(group_key, target_channel)
                     )
                 continue
 
-            # -------- SINGLE MEDIA --------
             S_CONSUME.labels(kind="single_media").inc()
             kind = postfix_kind(postfix)
-            logging.info(f"🖼 Single media msg_id={msg_id} kind={kind} path={path}")
 
             ok = await wait_for_file(path)
             if not ok:
@@ -477,37 +346,26 @@ async def kafka_consume():
 
             try:
                 input_file = FSInputFile(path)
-
                 if kind == "photo":
                     await send_limited(
-                        bot.send_photo,
-                        target_channel,
+                        bot.send_photo, target_channel,
                         photo=input_file,
                         caption=text or None,
                         caption_entities=entities if text else None,
                     )
                     S_SEND.labels(type="photo", status="ok").inc()
-
                 elif kind == "video":
                     await send_limited(
-                        bot.send_video,
-                        target_channel,
+                        bot.send_video, target_channel,
                         video=input_file,
                         caption=text or None,
                         caption_entities=entities if text else None,
                     )
                     S_SEND.labels(type="video", status="ok").inc()
-
                 else:
-                    await send_limited(
-                        bot.send_message,
-                        target_channel,
-                        text=text,
-                        entities=entities,
-                    )
+                    await send_limited(bot.send_message, target_channel, text=text, entities=entities)
                     S_SEND.labels(type="message", status="ok").inc()
 
-                # cleanup file/folder
                 try:
                     os.remove(path)
                 except Exception:
@@ -529,10 +387,6 @@ async def kafka_consume():
             pass
         logging.info("Sender stopped")
 
-
-# ---------------------------------------------------------------------------
-# MAIN
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     start_http_server(METRICS_PORT)
     logging.info(f"📈 [{SERVICE_NAME}] metrics on :{METRICS_PORT}/metrics")
