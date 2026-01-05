@@ -1,0 +1,44 @@
+{
+  "uid": "tgnews-parser",
+  "title": "TGNews - Parser",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Parsed events rate by kind",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(tgnews_parser_events_total[1m]))",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka send errors (rate)",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(tgnews_parser_kafka_send_total{status=\"error\"}[1m])",
+          "legendFormat": "error"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Download duration p95 (seconds)",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(tgnews_parser_download_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ]
+    }
+  ]
+}
+

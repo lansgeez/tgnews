@@ -1,0 +1,3 @@
+aiogram
+kafka-python
+prometheus-client

@@ -1,0 +1,4 @@
+telethon
+kafka-python
+prometheus-client
+

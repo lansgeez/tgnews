@@ -1,0 +1,54 @@
+{
+  "uid": "tgnews-sender",
+  "title": "TGNews - Sender",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Consumed messages rate",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(tgnews_sender_consume_total[1m]))",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Telegram send errors (rate)",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "sum by (type) (rate(tgnews_sender_send_total{status=\"error\"}[1m]))",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Album flush rate",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(tgnews_sender_album_flush_total{status=\"ok\"}[1m])",
+          "legendFormat": "album_ok"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rate limit wait seconds (rate)",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(tgnews_sender_rate_limit_wait_seconds_total[1m])",
+          "legendFormat": "wait_sec/s"
+        }
+      ]
+    }
+  ]
+}
