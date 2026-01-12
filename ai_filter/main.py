@@ -93,12 +93,22 @@ def moderation_score(text: str) -> float:
 def is_duplicate(text: str, recent_embeddings: deque) -> float:
     if not text or not recent_embeddings:
         return 0.0
+    
     with F_DUP_TIME.time():
         emb = embedder.encode(text, convert_to_tensor=True, normalize_embeddings=True)
-        # сравним с последними N эмбеддингами
-        sims = util.cos_sim(emb, list(recent_embeddings))[0]
+        recent_list = list(recent_embeddings)
+        
+        # Фикс: если recent_list пуст или 1 элемент
+        if len(recent_list) == 0:
+            return 0.0
+        if len(recent_list) == 1:
+            sim = util.cos_sim(emb, recent_list[0].unsqueeze(0))[0][0].item()
+            return float(sim)
+            
+        sims = util.cos_sim(emb, recent_list)[0]
         best = float(sims.max().item())
     return best
+
 
 
 def main():
