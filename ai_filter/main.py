@@ -98,31 +98,25 @@ def is_duplicate(text: str, recent_embeddings: deque) -> float:
     
     try:
         with F_DUP_TIME.time():
-            emb = embedder.encode(text)
+            emb = embedder.encode(text)  # numpy array [384]
             
-            # Собираем только валидные 384-dim embeddings
-            recent_valid = []
-            for r_emb in list(recent_embeddings)[-50:]:  # меньше для скорости
-                try:
-                    if isinstance(r_emb, torch.Tensor):
-                        r_emb = r_emb.cpu()
-                    r_emb = torch.tensor(r_emb, dtype=torch.float32)
-                    if r_emb.shape[-1] == 384:  # MiniLM dim
-                        recent_valid.append(r_emb)
-                except:
-                    continue
+            # Собираем recent embeddings как список numpy arrays
+            recent_list = [torch.from_numpy(r) if isinstance(r, np.ndarray) else r.cpu() 
+                          for r in list(recent_embeddings)[-50:]]
             
-            if len(recent_valid) < 2:
+            if len(recent_list) < 2:
                 return 0.0
             
-            recent_2d = torch.stack(recent_valid)  # [N, 384]
-            emb_2d = emb.unsqueeze(0)  # [1, 384]
+            # Stack в torch tensor [N, 384]
+            recent_2d = torch.stack(recent_list).float()
+            emb_2d = torch.from_numpy(emb).float().unsqueeze(0)  # [1, 384]
             
             sims = util.cos_sim(emb_2d, recent_2d)[0]
-            return float(sims.max().cpu().item())
+            return float(sims.max().item())
     except Exception as e:
         logging.error(f"Dup check error: {e}")
         return 0.0
+
 
 
 def main():
