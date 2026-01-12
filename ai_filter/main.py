@@ -89,25 +89,35 @@ def moderation_score(text: str) -> float:
     # Здесь — как базовая демонстрация инференса.
     return float(res.get("score", 0.0))
 
+import torch
 
 def is_duplicate(text: str, recent_embeddings: deque) -> float:
-    if not text or not recent_embeddings:
+    if not text or len(recent_embeddings) < 2:
         return 0.0
     
     with F_DUP_TIME.time():
         emb = embedder.encode(text, convert_to_tensor=True, normalize_embeddings=True)
-        recent_list = list(recent_embeddings)
         
-        # Фикс: если recent_list пуст или 1 элемент
-        if len(recent_list) == 0:
+        # Собираем recent embeddings как 2D tensor [N, 384]
+        recent_tensors = []
+        for r_emb in list(recent_embeddings)[-100:]:  # max 100 последних
+            if hasattr(r_emb, 'cpu'):  # torch tensor
+                r_emb = r_emb.cpu().numpy()
+            if r_emb.ndim == 1:
+                r_emb = r_emb.reshape(1, -1)
+            recent_tensors.append(torch.tensor(r_emb, dtype=torch.float32))
+        
+        if len(recent_tensors) < 2:
             return 0.0
-        if len(recent_list) == 1:
-            sim = util.cos_sim(emb, recent_list[0].unsqueeze(0))[0][0].item()
-            return float(sim)
             
-        sims = util.cos_sim(emb, recent_list)[0]
+        recent_2d = torch.stack(recent_tensors)  # [N, 384]
+        emb_2d = emb.unsqueeze(0)  # [1, 384]
+        
+        sims = util.cos_sim(emb_2d, recent_2d)[0]  # [N]
         best = float(sims.max().item())
     return best
+
+
 
 
 
