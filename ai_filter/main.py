@@ -1,6 +1,6 @@
 import os, json, time, logging
 from collections import deque
-
+import torch
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import NoBrokersAvailable
 
@@ -89,36 +89,40 @@ def moderation_score(text: str) -> float:
     # Здесь — как базовая демонстрация инференса.
     return float(res.get("score", 0.0))
 
-import torch
+
+
 
 def is_duplicate(text: str, recent_embeddings: deque) -> float:
     if not text or len(recent_embeddings) < 2:
         return 0.0
     
-    with F_DUP_TIME.time():
-        emb = embedder.encode(text, convert_to_tensor=True, normalize_embeddings=True)
-        
-        # Собираем recent embeddings как 2D tensor [N, 384]
-        recent_tensors = []
-        for r_emb in list(recent_embeddings)[-100:]:  # max 100 последних
-            if hasattr(r_emb, 'cpu'):  # torch tensor
-                r_emb = r_emb.cpu().numpy()
-            if r_emb.ndim == 1:
-                r_emb = r_emb.reshape(1, -1)
-            recent_tensors.append(torch.tensor(r_emb, dtype=torch.float32))
-        
-        if len(recent_tensors) < 2:
-            return 0.0
+    try:
+        with F_DUP_TIME.time():
+            emb = embedder.encode(text)
             
-        recent_2d = torch.stack(recent_tensors)  # [N, 384]
-        emb_2d = emb.unsqueeze(0)  # [1, 384]
-        
-        sims = util.cos_sim(emb_2d, recent_2d)[0]  # [N]
-        best = float(sims.max().item())
-    return best
-
-
-
+            # Собираем только валидные 384-dim embeddings
+            recent_valid = []
+            for r_emb in list(recent_embeddings)[-50:]:  # меньше для скорости
+                try:
+                    if isinstance(r_emb, torch.Tensor):
+                        r_emb = r_emb.cpu()
+                    r_emb = torch.tensor(r_emb, dtype=torch.float32)
+                    if r_emb.shape[-1] == 384:  # MiniLM dim
+                        recent_valid.append(r_emb)
+                except:
+                    continue
+            
+            if len(recent_valid) < 2:
+                return 0.0
+            
+            recent_2d = torch.stack(recent_valid)  # [N, 384]
+            emb_2d = emb.unsqueeze(0)  # [1, 384]
+            
+            sims = util.cos_sim(emb_2d, recent_2d)[0]
+            return float(sims.max().cpu().item())
+    except Exception as e:
+        logging.error(f"Dup check error: {e}")
+        return 0.0
 
 
 def main():
