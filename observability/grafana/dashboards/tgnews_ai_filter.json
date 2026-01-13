@@ -1,0 +1,40 @@
+{
+  "uid": "tgnews-ai_filter",
+  "title": "TGNews - AI Filter", 
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Input rate by kind",
+      "gridPos": {"x":0,"y":0,"w":12,"h":8},
+      "targets": [{"expr": "sum by (kind) (rate(tgnews_ai_filter_in_total[1m]))", "legendFormat": "{{kind}}"}]
+    },
+    {
+      "type": "timeseries", 
+      "title": "Output decisions rate",
+      "gridPos": {"x":12,"y":0,"w":12,"h":8},
+      "targets": [{"expr": "sum by (decision,reason) (rate(tgnews_ai_filter_out_total[1m]))", "legendFormat": "{{decision}}/{{reason}}"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Moderation p95 (sec)",
+      "gridPos": {"x":0,"y":8,"w":12,"h":8}, 
+      "targets": [{"expr": "histogram_quantile(0.95, rate(tgnews_ai_filter_moderation_seconds_bucket[5m]))"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Duplicate check p95 (sec)",
+      "gridPos": {"x":12,"y":8,"w":12,"h":8},
+      "targets": [{"expr": "histogram_quantile(0.95, rate(tgnews_ai_filter_duplicate_seconds_bucket[5m]))"}]
+    },
+    {
+      "type": "stat",
+      "title": "Reject ratio %",
+      "gridPos": {"x":0,"y":16,"w":24,"h":6},
+      "targets": [{"expr": "rate(tgnews_ai_filter_out_total{decision=\"reject\"}[5m]) / rate(tgnews_ai_filter_in_total[5m]) * 100"}]
+    }
+  ]
+}

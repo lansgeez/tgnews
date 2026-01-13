@@ -1,43 +1,55 @@
-import os, json, time, logging, numpy as np, torch
+#!/usr/bin/env python3
+"""
+TGNews AI Filter Service
+- Kafka: news_raw -> news_filtered / news_rejected
+- Moderation: Detoxify (multilingual)
+- Dedup: SentenceTransformer all-MiniLM-L6-v2 (cosine sim)
+"""
+
+import os
+import json
+import time
+import logging
 from collections import deque
-
-from kafka import KafkaConsumer, KafkaProducer
+from typing import Dict, Any
+from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import NoBrokersAvailable
-
-from prometheus_client import Counter, Gauge, Histogram, start_http_server
-
-from detoxify import Detoxify
+import torch
+import numpy as np
 from sentence_transformers import SentenceTransformer, util
+from detoxify import Detoxify
 
+# Prometheus
+from prometheus_client import Counter, Histogram, Gauge, start_http_server
+
+# -------------------- ENV / CONFIG --------------------
 SERVICE_NAME = os.getenv("SERVICE_NAME", "ai_filter")
 METRICS_PORT = int(os.getenv("METRICS_PORT", "9103"))
-
 BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 IN_TOPIC = os.getenv("KAFKA_IN_TOPIC", "news_raw")
 OUT_TOPIC = os.getenv("KAFKA_OUT_TOPIC", "news_filtered")
 REJECT_TOPIC = os.getenv("KAFKA_REJECT_TOPIC", "news_rejected")
-
-MODERATION_THRESHOLD = float(os.getenv("MODERATION_THRESHOLD", "0.70"))
+MODERATION_THRESHOLD = float(os.getenv("MODERATION_THRESHOLD", "0.80"))
 DUP_SIM_THRESHOLD = float(os.getenv("DUP_SIM_THRESHOLD", "0.88"))
 DUP_CACHE_SIZE = int(os.getenv("DUP_CACHE_SIZE", "2000"))
 
-logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler()],
-                    format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%s] %(levelname)s %(message)s" % SERVICE_NAME
+)
 
-# -------------------- METRICS --------------------
-F_IN = Counter("tgnews_aifilter_in_total", "Input events", ["kind"])
-F_OUT = Counter("tgnews_aifilter_out_total", "Output decisions", ["decision", "reason"])
-F_LAST_TS = Gauge("tgnews_aifilter_last_event_timestamp", "Unix ts last event")
-F_MOD_TIME = Histogram("tgnews_aifilter_moderation_seconds", "Moderation inference seconds")
-F_DUP_TIME = Histogram("tgnews_aifilter_duplicate_seconds", "Duplicate check seconds")
+# -------------------- PROMETHEUS METRICS --------------------
+F_IN = Counter("tgnews_ai_filter_in_total", "Input messages from Kafka", ["kind"])
+F_OUT = Counter("tgnews_ai_filter_out_total", "Output decisions", ["decision", "reason"])
+F_MOD_TIME = Histogram("tgnews_ai_filter_moderation_seconds", "Moderation inference time")
+F_DUP_TIME = Histogram("tgnews_ai_filter_duplicate_seconds", "Duplicate check time")
+F_LAST_TS = Gauge("tgnews_ai_filter_last_event_timestamp", "Unix timestamp of last processed event")
 
-def norm_text(s: str) -> str:
-    s = (s or "").strip()
-    return " ".join(s.split())
-
+# -------------------- KAFKA --------------------
 def create_consumer():
     while True:
         try:
+            logging.info(f"Connecting to Kafka: {BOOTSTRAP} topic={IN_TOPIC}")
             return KafkaConsumer(
                 IN_TOPIC,
                 bootstrap_servers=BOOTSTRAP,
@@ -62,11 +74,14 @@ def create_producer():
             time.sleep(3)
 
 # -------------------- MODELS --------------------
-# 1) Модерация: Detoxify (multilingual, реальный фильтр токсичности)
+logging.info("Loading models...")
 moderation_model = Detoxify("multilingual", device="cpu")
-
-# 2) Антидубль: all-MiniLM-L6-v2
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+logging.info("Models loaded")
+
+def norm_text(text: str) -> str:
+    """Normalize text for processing (trim, lowercase for dup check)"""
+    return (text or "").strip()[:2000].lower()
 
 def moderation_score(text: str) -> float:
     if not text:
@@ -112,11 +127,12 @@ def main():
     producer = create_producer()
 
     recent_embeddings = deque(maxlen=DUP_CACHE_SIZE)
+    logging.info(f"[{SERVICE_NAME}] Started. Cache={DUP_CACHE_SIZE}, mod_th={MODERATION_THRESHOLD}, dup_th={DUP_SIM_THRESHOLD}")
 
     for msg in consumer:
         data = msg.value or {}
         F_LAST_TS.set(time.time())
-
+        
         text = norm_text(data.get("text", ""))
         has_media = bool(data.get("has_media", False))
         F_IN.labels(kind="media" if has_media else "text").inc()

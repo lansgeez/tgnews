@@ -1,0 +1,956 @@
+observability/grafana/dashboards/tgnews_parser.json
+{
+  "uid": "tgnews-parser",
+  "title": "TGNews - Parser",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Parsed events rate by kind",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(tgnews_parser_events_total[1m]))",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka send errors (rate)",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(tgnews_parser_kafka_send_total{status=\"error\"}[1m])",
+          "legendFormat": "error"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Download duration p95 (seconds)",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(tgnews_parser_download_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ]
+    }
+  ]
+}
+
+observability/grafana/dashboards/tgnews_sender.json
+{
+  "uid": "tgnews-sender",
+  "title": "TGNews - Sender",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Consumed messages rate",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(tgnews_sender_consume_total[1m]))",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Telegram send errors (rate)",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "sum by (type) (rate(tgnews_sender_send_total{status=\"error\"}[1m]))",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Album flush rate",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(tgnews_sender_album_flush_total{status=\"ok\"}[1m])",
+          "legendFormat": "album_ok"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rate limit wait seconds (rate)",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(tgnews_sender_rate_limit_wait_seconds_total[1m])",
+          "legendFormat": "wait_sec/s"
+        }
+      ]
+    }
+  ]
+}
+
+observability/grafana/provisioning/dashboards/dashboards.yml
+apiVersion: 1
+
+providers:
+  - name: "default"
+    orgId: 1
+    folder: "TGNews"
+    type: file
+    disableDeletion: true
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
+
+observability/grafana/provisioning/datasources/datasource.yml
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+observability/prometheus/prometheus.yml
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "parser"
+    static_configs:
+      - targets: ["parser:9101"]
+
+  - job_name: "sender"
+    static_configs:
+      - targets: ["sender:9102"]
+
+docker-compose.yml
+version: "3.8"
+
+volumes:
+  zookeeper-data:
+  kafka-data:
+  prometheus-data:
+  grafana-data:
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "nc -z localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
+      # single broker важно
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "nc -z localhost 29092"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  parser:
+    build:
+      context: ./parser
+      dockerfile: Dockerfile
+    container_name: telethon-parser
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: news_raw
+      METRICS_PORT: "9101"
+      SERVICE_NAME: "parser"
+    ports:
+      - "9101:9101"
+    volumes:
+      - ./parser:/app
+      - ./downloads:/app/downloads
+
+  ai_filter:
+    build:
+      context: ./ai_filter
+      dockerfile: Dockerfile
+    container_name: ai-filter
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_IN_TOPIC: news_raw
+      KAFKA_OUT_TOPIC: news_filtered
+      KAFKA_REJECT_TOPIC: news_rejected
+
+      METRICS_PORT: "9103"
+      SERVICE_NAME: "ai_filter"
+
+      MODERATION_THRESHOLD: "0.80"
+      DUP_SIM_THRESHOLD: "0.88"
+      DUP_CACHE_SIZE: "2000"
+    ports:
+      - "9103:9103"
+    volumes:
+      - ./ai_filter:/app
+
+  sender:
+    build:
+      context: ./sender
+      dockerfile: Dockerfile
+    container_name: tg-sender
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      TARGET_CHANNEL: ${TARGET_CHANNEL}
+
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: news_filtered
+
+      METRICS_PORT: "9102"
+      SERVICE_NAME: "sender"
+
+      # твои таймауты/лимиты — можно менять в .env
+      RATE_LIMIT_SECONDS: ${RATE_LIMIT_SECONDS:-30}
+      ALBUM_TIMEOUT_SECONDS: ${ALBUM_TIMEOUT_SECONDS:-2.0}
+      FILE_WAIT_TIMEOUT_SECONDS: ${FILE_WAIT_TIMEOUT_SECONDS:-15}
+      DOWNLOADS_DIR: downloads
+    ports:
+      - "9102:9102"
+    volumes:
+      - ./sender:/app
+      - ./downloads:/app/downloads
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      parser:
+        condition: service_started
+      sender:
+        condition: service_started
+      ai_filter:
+        condition: service_started
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+sender/main.py
+# sender/main.py
+import os
+import json
+import time
+import logging
+import asyncio
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any
+
+from aiogram import Bot, Dispatcher
+from aiogram.types import FSInputFile, MessageEntity, InputMediaPhoto, InputMediaVideo
+from kafka import KafkaConsumer
+from kafka.errors import NoBrokersAvailable
+
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
+
+import config
+
+SERVICE_NAME = os.getenv("SERVICE_NAME", "sender")
+METRICS_PORT = int(os.getenv("METRICS_PORT", "9102"))
+
+DOWNLOADS_DIR = os.getenv("DOWNLOADS_DIR", "downloads")
+
+RATE_LIMIT = int(os.getenv("RATE_LIMIT_SECONDS", "30"))  # sec
+ALBUM_TIMEOUT = float(os.getenv("ALBUM_TIMEOUT_SECONDS", "2.0"))  # sec
+FILE_WAIT_TIMEOUT = int(os.getenv("FILE_WAIT_TIMEOUT_SECONDS", "15"))  # sec
+
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[logging.StreamHandler()],
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
+S_CONSUME = Counter("tgnews_sender_consume_total", "Consumed kafka messages", ["kind"])
+S_SEND = Counter("tgnews_sender_send_total", "Telegram sends", ["type", "status"])
+S_ALBUM_FLUSH = Counter("tgnews_sender_album_flush_total", "Album flushes", ["status"])
+S_RATE_WAIT = Counter("tgnews_sender_rate_limit_wait_seconds_total", "Seconds waited by rate limit")
+S_FILE_WAIT_FAIL = Counter("tgnews_sender_file_wait_fail_total", "File wait failures")
+S_FILE_WAIT_SECONDS = Histogram("tgnews_sender_file_wait_seconds", "Seconds spent waiting for files")
+S_LAST_TS = Gauge("tgnews_sender_last_event_timestamp", "Unix timestamp of last processed kafka message")
+
+if not config.TELEGRAM_TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN is not set (check .env / docker-compose environment)")
+
+bot = Bot(token=config.TELEGRAM_TOKEN)
+dp = Dispatcher()
+
+_LAST_SEND_TIME = 0.0
+_send_lock = asyncio.Lock()
+
+async def send_limited(fn, *args, **kwargs):
+    global _LAST_SEND_TIME
+    async with _send_lock:
+        now = time.time()
+        if now - _LAST_SEND_TIME < RATE_LIMIT:
+            wait = RATE_LIMIT - (now - _LAST_SEND_TIME)
+            logging.info(f"⏳ Rate limit: ждём {wait:.1f} сек...")
+            S_RATE_WAIT.inc(wait)
+            await asyncio.sleep(wait)
+
+        _LAST_SEND_TIME = time.time()
+        return await fn(*args, **kwargs)
+
+async def wait_for_file(path: str, timeout_seconds: int = FILE_WAIT_TIMEOUT) -> bool:
+    t0 = time.time()
+    try:
+        last_size = -1
+        stable_ticks = 0
+
+        steps = int(timeout_seconds / 0.1)
+        for _ in range(max(1, steps)):
+            if os.path.exists(path):
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    size = 0
+
+                if size > 0:
+                    if size == last_size:
+                        stable_ticks += 1
+                    else:
+                        stable_ticks = 0
+                        last_size = size
+
+                    if stable_ticks >= 3:
+                        return True
+
+            await asyncio.sleep(0.1)
+
+        S_FILE_WAIT_FAIL.inc()
+        return False
+    finally:
+        S_FILE_WAIT_SECONDS.observe(time.time() - t0)
+
+def convert_telethon_entities(telethon_entities):
+    aiogram_entities: List[MessageEntity] = []
+    for ent in telethon_entities or []:
+        if not isinstance(ent, dict):
+            continue
+
+        aiogram_type = ent.get("type", "").lower().replace("messageentity", "")
+        if aiogram_type == "texturl":
+            aiogram_type = "text_link"
+        if aiogram_type == "strike":
+            aiogram_type = "strikethrough"
+
+        supported = {
+            "bold", "italic", "code", "pre", "underline", "strikethrough",
+            "spoiler", "text_link", "text_mention", "blockquote", "url",
+        }
+        if aiogram_type not in supported:
+            continue
+
+        params = {
+            "type": aiogram_type,
+            "offset": int(ent.get("offset", 0) or 0),
+            "length": int(ent.get("length", 0) or 0),
+        }
+        if ent.get("url"):
+            params["url"] = ent["url"]
+
+        try:
+            aiogram_entities.append(MessageEntity(**params))
+        except Exception:
+            logging.exception("Entity parse error")
+
+    return aiogram_entities
+
+def postfix_kind(postfix: str) -> str:
+    postfix = (postfix or "").lower()
+    if postfix in [".jpg", ".jpeg", ".png", ".webp"]:
+        return "photo"
+    if postfix in [".mp4", ".mov"]:
+        return "video"
+    if postfix in [".gif"]:
+        return "video"
+    return "other"
+
+@dataclass
+class AlbumItem:
+    msg_id: int
+    path: str
+    postfix: str
+    text: str
+    entities: List[MessageEntity]
+
+album_buffer: Dict[str, List[AlbumItem]] = defaultdict(list)
+album_timers: Dict[str, asyncio.Task] = {}
+album_last_seen: Dict[str, float] = {}
+
+async def extendable_album_timer(group_key: str, target_channel: str):
+    try:
+        while True:
+            last = album_last_seen.get(group_key, time.time())
+            remaining = (last + ALBUM_TIMEOUT) - time.time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(remaining, 0.5))
+
+        await send_album(group_key, target_channel)
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logging.exception(f"Album timer crashed for {group_key}")
+        safe_cleanup_album_state(group_key)
+
+async def send_album(group_key: str, target_channel: str):
+    items = album_buffer.get(group_key, [])
+    if not items:
+        return
+
+    try:
+        items.sort(key=lambda x: x.msg_id)
+    except Exception:
+        pass
+
+    caption_idx: Optional[int] = None
+    for i, it in enumerate(items):
+        if (it.text or "").strip():
+            caption_idx = i
+            break
+    if caption_idx is None:
+        caption_idx = 0
+
+    caption_text = (items[caption_idx].text or "").strip()
+    caption_entities = items[caption_idx].entities or []
+
+    media_group = []
+    for i, it in enumerate(items):
+        kind = postfix_kind(it.postfix)
+
+        ok = await wait_for_file(it.path)
+        if not ok:
+            logging.error(f"❌ File wait timeout: {it.path}")
+            continue
+
+        is_caption_item = (i == caption_idx and bool(caption_text))
+        cap = caption_text if is_caption_item else None
+        cap_entities = caption_entities if is_caption_item else None
+
+        if kind == "photo":
+            media_group.append(
+                InputMediaPhoto(
+                    media=FSInputFile(it.path),
+                    caption=cap,
+                    caption_entities=cap_entities,
+                )
+            )
+        elif kind == "video":
+            media_group.append(
+                InputMediaVideo(
+                    media=FSInputFile(it.path),
+                    caption=cap,
+                    caption_entities=cap_entities,
+                )
+            )
+        else:
+            logging.warning(f"⚠ Unsupported album item: postfix={it.postfix} path={it.path}")
+
+    if not media_group:
+        logging.error(f"⚠ Album {group_key} has no sendable items.")
+        cleanup_album_files(items)
+        safe_cleanup_album_state(group_key)
+        S_ALBUM_FLUSH.labels(status="error").inc()
+        return
+
+    try:
+        logging.info(f"📤 Sending album {group_key}: {len(media_group)} items (caption_idx={caption_idx})")
+        await send_limited(bot.send_media_group, target_channel, media_group)
+        S_ALBUM_FLUSH.labels(status="ok").inc()
+        S_SEND.labels(type="album", status="ok").inc()
+    except Exception:
+        logging.exception(f"❌ Album send error for {group_key}")
+        S_ALBUM_FLUSH.labels(status="error").inc()
+        S_SEND.labels(type="album", status="error").inc()
+        safe_cleanup_album_state(group_key)
+        return
+
+    cleanup_album_files(items)
+    safe_cleanup_album_state(group_key)
+
+def cleanup_album_files(items: List[AlbumItem]):
+    for it in items:
+        try:
+            os.remove(it.path)
+        except Exception:
+            pass
+    try:
+        folder = os.path.dirname(items[0].path)
+        if os.path.isdir(folder) and not os.listdir(folder):
+            os.rmdir(folder)
+    except Exception:
+        pass
+
+def safe_cleanup_album_state(group_key: str):
+    album_buffer.pop(group_key, None)
+    album_last_seen.pop(group_key, None)
+    t = album_timers.pop(group_key, None)
+    if t:
+        try:
+            t.cancel()
+        except Exception:
+            pass
+
+async def create_consumer():
+    while True:
+        try:
+            logging.info(f"🔄 [{SERVICE_NAME}] Connecting to Kafka: {config.KAFKA_BOOTSTRAP_SERVERS} topic={config.KAFKA_TOPIC}")
+            consumer = KafkaConsumer(
+                config.KAFKA_TOPIC,
+                bootstrap_servers=config.KAFKA_BOOTSTRAP_SERVERS,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                auto_offset_reset="latest",
+                group_id="aiogram-sender-v3",
+                enable_auto_commit=True,
+            )
+            logging.info(f"✅ [{SERVICE_NAME}] Kafka consumer connected.")
+            return consumer
+        except NoBrokersAvailable:
+            logging.warning(f"❌ [{SERVICE_NAME}] Kafka not ready. Retry in 3s...")
+            await asyncio.sleep(3)
+
+async def kafka_consume():
+    consumer = await create_consumer()
+    target_channel = config.TARGET_CHANNEL
+
+    try:
+        for msg in consumer:
+            data: Dict[str, Any] = msg.value
+            S_LAST_TS.set(time.time())
+            logging.info(f"Kafka message: {data}")
+
+            text = data.get("text", "") or ""
+            entities = convert_telethon_entities(data.get("entities", []))
+
+            channel_id = data.get("channel_id")
+            grouped_id = data.get("grouped_id")
+            msg_id = int(data.get("msg_id") or 0)
+            has_media = bool(data.get("has_media", False))
+            postfix = data.get("postfix")
+
+            if (not has_media) or (not postfix):
+                S_CONSUME.labels(kind="text").inc()
+                try:
+                    await send_limited(bot.send_message, target_channel, text=text, entities=entities)
+                    S_SEND.labels(type="message", status="ok").inc()
+                except Exception:
+                    logging.exception("❌ send_message error")
+                    S_SEND.labels(type="message", status="error").inc()
+                continue
+
+            folder_suffix = grouped_id if grouped_id is not None else "single"
+            folder = os.path.join(DOWNLOADS_DIR, f"{channel_id}_{folder_suffix}")
+            path = os.path.join(folder, f"{msg_id}{postfix}")
+
+            if grouped_id is not None:
+                S_CONSUME.labels(kind="album_item").inc()
+                group_key = f"{channel_id}_{grouped_id}"
+
+                album_buffer[group_key].append(
+                    AlbumItem(
+                        msg_id=msg_id,
+                        path=path,
+                        postfix=postfix,
+                        text=text,
+                        entities=entities,
+                    )
+                )
+                album_last_seen[group_key] = time.time()
+
+                if group_key not in album_timers:
+                    album_timers[group_key] = asyncio.create_task(
+                        extendable_album_timer(group_key, target_channel)
+                    )
+                continue
+
+            S_CONSUME.labels(kind="single_media").inc()
+            kind = postfix_kind(postfix)
+
+            ok = await wait_for_file(path)
+            if not ok:
+                logging.error(f"❌ file wait timeout: {path}")
+                S_SEND.labels(type=kind, status="error").inc()
+                continue
+
+            try:
+                input_file = FSInputFile(path)
+                if kind == "photo":
+                    await send_limited(
+                        bot.send_photo, target_channel,
+                        photo=input_file,
+                        caption=text or None,
+                        caption_entities=entities if text else None,
+                    )
+                    S_SEND.labels(type="photo", status="ok").inc()
+                elif kind == "video":
+                    await send_limited(
+                        bot.send_video, target_channel,
+                        video=input_file,
+                        caption=text or None,
+                        caption_entities=entities if text else None,
+                    )
+                    S_SEND.labels(type="video", status="ok").inc()
+                else:
+                    await send_limited(bot.send_message, target_channel, text=text, entities=entities)
+                    S_SEND.labels(type="message", status="ok").inc()
+
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+                try:
+                    if os.path.isdir(folder) and not os.listdir(folder):
+                        os.rmdir(folder)
+                except Exception:
+                    pass
+
+            except Exception:
+                logging.exception("❌ media send error")
+                S_SEND.labels(type=kind, status="error").inc()
+
+    finally:
+        try:
+            consumer.close()
+        except Exception:
+            pass
+        logging.info("Sender stopped")
+
+if __name__ == "__main__":
+    start_http_server(METRICS_PORT)
+    logging.info(f"📈 [{SERVICE_NAME}] metrics on :{METRICS_PORT}/metrics")
+    try:
+        asyncio.run(kafka_consume())
+    except KeyboardInterrupt:
+        print("Stopping…")
+
+parser/main.py
+# parser/main.py
+import os
+import json
+import time
+import logging
+from datetime import datetime
+
+from kafka import KafkaProducer
+from kafka.errors import NoBrokersAvailable
+
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+from telethon.tl.types import (
+    MessageMediaPhoto,
+    MessageMediaDocument,
+    MessageMediaWebPage,
+    MessageMediaGeo,
+    MessageMediaContact,
+    DocumentAttributeVideo,
+    DocumentAttributeAudio,
+    DocumentAttributeSticker,
+    DocumentAttributeAnimated,
+    DocumentAttributeFilename,
+)
+
+from prometheus_client import Counter, Histogram, Gauge, start_http_server
+
+import config
+
+# ---------------------------------------------------------------------------
+# ENV / CONFIG
+# ---------------------------------------------------------------------------
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "news_raw")  # <-- ВАЖНО
+
+SERVICE_NAME = os.getenv("SERVICE_NAME", "parser")
+METRICS_PORT = int(os.getenv("METRICS_PORT", "9101"))
+
+DOWNLOADS_DIR = os.getenv("DOWNLOADS_DIR", "downloads")  # <-- согласовано с sender
+
+API_ID = config.API_ID
+API_HASH = config.API_HASH
+SESSION_STRING = config.SESSION_STRING
+
+# ---------------------------------------------------------------------------
+# LOGGING
+# ---------------------------------------------------------------------------
+current_time = datetime.now().strftime("%Y%m%d_%H:%M:%S")
+logging.basicConfig(
+    level=logging.INFO,
+    filename=f"tgpars_{current_time}.log",
+    filemode="a",
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
+# ---------------------------------------------------------------------------
+# PROMETHEUS METRICS
+# ---------------------------------------------------------------------------
+P_EVENTS = Counter("tgnews_parser_events_total", "Total Telegram events parsed", ["has_media", "kind"])
+P_KAFKA_SEND = Counter("tgnews_parser_kafka_send_total", "Kafka send attempts", ["status"])
+P_DL_SECONDS = Histogram("tgnews_parser_download_seconds", "Media download duration seconds", ["kind"])
+P_DL_FAIL = Counter("tgnews_parser_download_fail_total", "Media download failures", ["reason", "kind"])
+P_LAST_TS = Gauge("tgnews_parser_last_event_timestamp", "Unix timestamp of last processed event")
+
+# ---------------------------------------------------------------------------
+# TELETHON CLIENT
+# ---------------------------------------------------------------------------
+client = TelegramClient(
+    StringSession(SESSION_STRING),
+    API_ID,
+    API_HASH,
+    device_model="Linux",
+    system_version="Docker",
+)
+
+# ---------------------------------------------------------------------------
+# KAFKA PRODUCER (RETRY)
+# ---------------------------------------------------------------------------
+def create_kafka_producer(bootstrap: str) -> KafkaProducer:
+    while True:
+        try:
+            print(f"🔄 [{SERVICE_NAME}] Connecting to Kafka: {bootstrap} ...")
+            producer = KafkaProducer(
+                bootstrap_servers=bootstrap,
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+            )
+            print(f"✅ [{SERVICE_NAME}] Kafka connected.")
+            return producer
+        except NoBrokersAvailable:
+            print(f"❌ [{SERVICE_NAME}] Kafka not ready. Retry in 3s...")
+            time.sleep(3)
+
+producer = create_kafka_producer(KAFKA_BOOTSTRAP_SERVERS)
+
+def send_to_kafka(message_data: dict):
+    try:
+        producer.send(KAFKA_TOPIC, value=message_data)
+        producer.flush()
+        P_KAFKA_SEND.labels(status="ok").inc()
+        logging.info(f"Sent to Kafka: {message_data}")
+    except Exception as e:
+        P_KAFKA_SEND.labels(status="error").inc()
+        logging.error(f"Kafka send error: {e}")
+        print(f"❌ Kafka send error: {e}")
+
+# ---------------------------------------------------------------------------
+# MEDIA EXTENSION DETECTION
+# ---------------------------------------------------------------------------
+def detect_media_extension(media) -> str:
+    if isinstance(media, MessageMediaPhoto):
+        return ".jpg"
+
+    if isinstance(media, MessageMediaDocument):
+        doc = media.document
+        ext = None
+
+        for attr in doc.attributes:
+            if isinstance(attr, DocumentAttributeFilename):
+                file_name = getattr(attr, "file_name", "")
+                if "." in file_name:
+                    ext = "." + file_name.rsplit(".", 1)[-1].lower()
+
+            if isinstance(attr, DocumentAttributeVideo):
+                ext = ".mp4"
+            elif isinstance(attr, DocumentAttributeAudio):
+                ext = ".mp3"
+            elif isinstance(attr, DocumentAttributeSticker):
+                ext = ".webp"
+            elif isinstance(attr, DocumentAttributeAnimated):
+                ext = ".gif"
+
+        return ext or ".bin"
+
+    if isinstance(media, MessageMediaWebPage):
+        return ".html"
+
+    if isinstance(media, (MessageMediaGeo, MessageMediaContact)):
+        return ".bin"
+
+    return ".bin"
+
+def kind_by_postfix(postfix: str) -> str:
+    if postfix in [".jpg", ".jpeg", ".png", ".webp"]:
+        return "photo"
+    if postfix in [".mp4", ".mov", ".gif"]:
+        return "video"
+    if postfix:
+        return "other"
+    return "text"
+
+def entities_to_dicts(entities):
+    out = []
+    for e in entities or []:
+        d = {"offset": e.offset, "length": e.length, "type": type(e).__name__}
+        if hasattr(e, "url") and e.url:
+            d["url"] = e.url
+        out.append(d)
+    return out
+
+# ---------------------------------------------------------------------------
+# TELETHON HANDLER
+# ---------------------------------------------------------------------------
+@client.on(events.NewMessage(chats=config.channels))
+async def normal_handler(event: events.NewMessage.Event):
+    try:
+        message = event.message
+        raw_text = message.message or ""
+        entities = message.entities or []
+
+        channel_id = message.peer_id.channel_id
+        grouped_id = message.grouped_id
+        msg_id = message.id
+
+        # подпись источника (@username)
+        try:
+            entity = await client.get_entity(message.peer_id)
+            src_username = getattr(entity, "username", None)
+            if src_username:
+                text = f"{raw_text}\n**\n@{src_username}"
+            else:
+                text = f"{raw_text}\n**\n@channel_{channel_id}"
+        except Exception:
+            text = raw_text
+
+        has_media = bool(message.media)
+        postfix = None
+
+        # media save
+        if has_media:
+            postfix = detect_media_extension(message.media)
+            kind = kind_by_postfix(postfix)
+
+            folder_suffix = grouped_id if grouped_id is not None else "single"
+            folder = os.path.join(DOWNLOADS_DIR, f"{channel_id}_{folder_suffix}")
+            os.makedirs(folder, exist_ok=True)
+
+            file_path = os.path.join(folder, f"{msg_id}{postfix}")
+
+            try:
+                with P_DL_SECONDS.labels(kind=kind).time():
+                    await client.download_media(message.media, file=file_path)
+
+                print(f"💾 [{SERVICE_NAME}] saved: {file_path}")
+                logging.info(f"Saved media: {file_path}")
+            except Exception as e:
+                P_DL_FAIL.labels(reason="exception", kind=kind).inc()
+                logging.error(f"Download error: {e}")
+                print(f"❌ Download error: {e}")
+        else:
+            kind = "text"
+
+        P_EVENTS.labels(has_media=str(has_media).lower(), kind=kind).inc()
+        P_LAST_TS.set(time.time())
+
+        message_data = {
+            "text": text,
+            "entities": entities_to_dicts(entities),
+            "channel_id": channel_id,
+            "grouped_id": grouped_id,
+            "msg_id": msg_id,
+            "has_media": has_media,
+            "postfix": postfix,
+        }
+
+        logging.info(f"Event: {message_data}")
+        send_to_kafka(message_data)
+
+    except Exception as e:
+        logging.error(f"Handler error: {e}")
+        print(f"❌ Handler error: {e}")
+
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    start_http_server(METRICS_PORT)
+    print(f"📈 [{SERVICE_NAME}] metrics on :{METRICS_PORT}/metrics")
+
+    logging.info("Parser started")
+    print("Parser started")
+
+    client.start()
+    client.run_until_disconnected()
