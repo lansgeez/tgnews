@@ -35,7 +35,7 @@ DUP_CACHE_SIZE = int(os.getenv("DUP_CACHE_SIZE", "2000"))
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%s] %(levelname)s %(message)s" % SERVICE_NAME
+    format=f"%(asctime)s [{SERVICE_NAME}] %(levelname)s %(message)s"  # ✅ f-string
 )
 
 # -------------------- PROMETHEUS METRICS --------------------
