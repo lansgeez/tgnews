@@ -55,7 +55,7 @@ async def send_limited(fn, *args, **kwargs):
         now = time.time()
         if now - _LAST_SEND_TIME < RATE_LIMIT:
             wait = RATE_LIMIT - (now - _LAST_SEND_TIME)
-            logging.info(f"⏳ Rate limit: ждём {wait:.1f} сек...")
+            logging.info(f"Rate limit: ждём {wait:.1f} сек...")
             S_RATE_WAIT.inc(wait)
             await asyncio.sleep(wait)
 
@@ -192,7 +192,7 @@ async def send_album(group_key: str, target_channel: str):
 
         ok = await wait_for_file(it.path)
         if not ok:
-            logging.error(f"❌ File wait timeout: {it.path}")
+            logging.error(f"File wait timeout: {it.path}")
             continue
 
         is_caption_item = (i == caption_idx and bool(caption_text))
@@ -216,22 +216,22 @@ async def send_album(group_key: str, target_channel: str):
                 )
             )
         else:
-            logging.warning(f"⚠ Unsupported album item: postfix={it.postfix} path={it.path}")
+            logging.warning(f"Unsupported album item: postfix={it.postfix} path={it.path}")
 
     if not media_group:
-        logging.error(f"⚠ Album {group_key} has no sendable items.")
+        logging.error(f"Album {group_key} has no sendable items.")
         cleanup_album_files(items)
         safe_cleanup_album_state(group_key)
         S_ALBUM_FLUSH.labels(status="error").inc()
         return
 
     try:
-        logging.info(f"📤 Sending album {group_key}: {len(media_group)} items (caption_idx={caption_idx})")
+        logging.info(f"Sending album {group_key}: {len(media_group)} items (caption_idx={caption_idx})")
         await send_limited(bot.send_media_group, target_channel, media_group)
         S_ALBUM_FLUSH.labels(status="ok").inc()
         S_SEND.labels(type="album", status="ok").inc()
     except Exception:
-        logging.exception(f"❌ Album send error for {group_key}")
+        logging.exception(f"Album send error for {group_key}")
         S_ALBUM_FLUSH.labels(status="error").inc()
         S_SEND.labels(type="album", status="error").inc()
         safe_cleanup_album_state(group_key)
@@ -266,7 +266,7 @@ def safe_cleanup_album_state(group_key: str):
 async def create_consumer():
     while True:
         try:
-            logging.info(f"🔄 [{SERVICE_NAME}] Connecting to Kafka: {config.KAFKA_BOOTSTRAP_SERVERS} topic={config.KAFKA_TOPIC}")
+            logging.info(f"[{SERVICE_NAME}] Connecting to Kafka: {config.KAFKA_BOOTSTRAP_SERVERS} topic={config.KAFKA_TOPIC}")
             consumer = KafkaConsumer(
                 config.KAFKA_TOPIC,
                 bootstrap_servers=config.KAFKA_BOOTSTRAP_SERVERS,
@@ -275,10 +275,10 @@ async def create_consumer():
                 group_id="aiogram-sender-v3",
                 enable_auto_commit=True,
             )
-            logging.info(f"✅ [{SERVICE_NAME}] Kafka consumer connected.")
+            logging.info(f"[{SERVICE_NAME}] Kafka consumer connected.")
             return consumer
         except NoBrokersAvailable:
-            logging.warning(f"❌ [{SERVICE_NAME}] Kafka not ready. Retry in 3s...")
+            logging.warning(f"[{SERVICE_NAME}] Kafka not ready. Retry in 3s...")
             await asyncio.sleep(3)
 
 async def kafka_consume():
@@ -306,7 +306,7 @@ async def kafka_consume():
                     await send_limited(bot.send_message, target_channel, text=text, entities=entities)
                     S_SEND.labels(type="message", status="ok").inc()
                 except Exception:
-                    logging.exception("❌ send_message error")
+                    logging.exception("send_message error")
                     S_SEND.labels(type="message", status="error").inc()
                 continue
 
@@ -340,7 +340,7 @@ async def kafka_consume():
 
             ok = await wait_for_file(path)
             if not ok:
-                logging.error(f"❌ file wait timeout: {path}")
+                logging.error(f"file wait timeout: {path}")
                 S_SEND.labels(type=kind, status="error").inc()
                 continue
 
@@ -377,7 +377,7 @@ async def kafka_consume():
                     pass
 
             except Exception:
-                logging.exception("❌ media send error")
+                logging.exception("media send error")
                 S_SEND.labels(type=kind, status="error").inc()
 
     finally:
@@ -389,7 +389,7 @@ async def kafka_consume():
 
 if __name__ == "__main__":
     start_http_server(METRICS_PORT)
-    logging.info(f"📈 [{SERVICE_NAME}] metrics on :{METRICS_PORT}/metrics")
+    logging.info(f"[{SERVICE_NAME}] metrics on :{METRICS_PORT}/metrics")
     try:
         asyncio.run(kafka_consume())
     except KeyboardInterrupt:
