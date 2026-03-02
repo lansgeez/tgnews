@@ -35,7 +35,7 @@ DUP_CACHE_SIZE = int(os.getenv("DUP_CACHE_SIZE", "2000"))
 
 logging.basicConfig(
     level=logging.INFO,
-    format=f"%(asctime)s [{SERVICE_NAME}] %(levelname)s %(message)s"  # ✅ f-string
+    format=f"%(asctime)s [{SERVICE_NAME}] %(levelname)s %(message)s" 
 )
 
 # -------------------- PROMETHEUS METRICS --------------------
@@ -89,7 +89,6 @@ def moderation_score(text: str) -> float:
     try:
         with F_MOD_TIME.time():
             scores = moderation_model.predict(text[:512])
-            # scores: {toxic, severe_toxic, obscene, threat, insult, identity_hate}
             max_score = max(scores.values()) if scores else 0.0
         return float(max_score)
     except Exception as e:
@@ -102,7 +101,7 @@ def is_duplicate(text: str, recent_embeddings: deque) -> float:
     
     try:
         with F_DUP_TIME.time():
-            emb = embedder.encode(text)  # numpy array [384]
+            emb = embedder.encode(text) 
             
             recent_list = [torch.from_numpy(r) if isinstance(r, np.ndarray) else r.cpu() 
                           for r in list(recent_embeddings)[-50:]]
@@ -111,7 +110,7 @@ def is_duplicate(text: str, recent_embeddings: deque) -> float:
                 return 0.0
             
             recent_2d = torch.stack(recent_list).float()
-            emb_2d = torch.from_numpy(emb).float().unsqueeze(0)  # [1, 384]
+            emb_2d = torch.from_numpy(emb).float().unsqueeze(0)
             
             sims = util.cos_sim(emb_2d, recent_2d)[0]
             return float(sims.max().item())
@@ -143,7 +142,6 @@ def main():
         # -------- 2) АНТИДУБЛЬ --------
         dup_score = is_duplicate(text, recent_embeddings)
 
-        # обновляем кеш эмбеддингов
         if text:
             emb = embedder.encode(text, convert_to_tensor=True, normalize_embeddings=True)
             recent_embeddings.append(emb)
