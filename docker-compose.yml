@@ -35,7 +35,6 @@ services:
     environment:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
 
-      # single broker важно
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -128,7 +127,6 @@ services:
       METRICS_PORT: "9102"
       SERVICE_NAME: "sender"
 
-      # твои таймауты/лимиты — можно менять в .env
       RATE_LIMIT_SECONDS: ${RATE_LIMIT_SECONDS:-30}
       ALBUM_TIMEOUT_SECONDS: ${ALBUM_TIMEOUT_SECONDS:-2.0}
       FILE_WAIT_TIMEOUT_SECONDS: ${FILE_WAIT_TIMEOUT_SECONDS:-15}
