@@ -31,12 +31,12 @@ import config
 # ENV / CONFIG
 # ---------------------------------------------------------------------------
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "news_raw")  # <-- ВАЖНО
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "news_raw") 
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "parser")
 METRICS_PORT = int(os.getenv("METRICS_PORT", "9101"))
 
-DOWNLOADS_DIR = os.getenv("DOWNLOADS_DIR", "downloads")  # <-- согласовано с sender
+DOWNLOADS_DIR = os.getenv("DOWNLOADS_DIR", "downloads") 
 
 API_ID = config.API_ID
 API_HASH = config.API_HASH
@@ -84,7 +84,7 @@ def create_kafka_producer(bootstrap: str) -> KafkaProducer:
                 bootstrap_servers=bootstrap,
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
             )
-            print(f"✅ [{SERVICE_NAME}] Kafka connected.")
+            print(f" [{SERVICE_NAME}] Kafka connected.")
             return producer
         except NoBrokersAvailable:
             print(f"❌ [{SERVICE_NAME}] Kafka not ready. Retry in 3s...")
@@ -101,7 +101,7 @@ def send_to_kafka(message_data: dict):
     except Exception as e:
         P_KAFKA_SEND.labels(status="error").inc()
         logging.error(f"Kafka send error: {e}")
-        print(f"❌ Kafka send error: {e}")
+        print(f"Kafka send error: {e}")
 
 # ---------------------------------------------------------------------------
 # MEDIA EXTENSION DETECTION
@@ -200,12 +200,12 @@ async def normal_handler(event: events.NewMessage.Event):
                 with P_DL_SECONDS.labels(kind=kind).time():
                     await client.download_media(message.media, file=file_path)
 
-                print(f"💾 [{SERVICE_NAME}] saved: {file_path}")
+                print(f"[{SERVICE_NAME}] saved: {file_path}")
                 logging.info(f"Saved media: {file_path}")
             except Exception as e:
                 P_DL_FAIL.labels(reason="exception", kind=kind).inc()
                 logging.error(f"Download error: {e}")
-                print(f"❌ Download error: {e}")
+                print(f"Download error: {e}")
         else:
             kind = "text"
 
@@ -227,14 +227,14 @@ async def normal_handler(event: events.NewMessage.Event):
 
     except Exception as e:
         logging.error(f"Handler error: {e}")
-        print(f"❌ Handler error: {e}")
+        print(f"Handler error: {e}")
 
 # ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     start_http_server(METRICS_PORT)
-    print(f"📈 [{SERVICE_NAME}] metrics on :{METRICS_PORT}/metrics")
+    print(f"[{SERVICE_NAME}] metrics on :{METRICS_PORT}/metrics")
 
     logging.info("Parser started")
     print("Parser started")
