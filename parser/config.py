@@ -1,6 +1,3 @@
-API_ID = '22077758' 
-API_HASH = 'bdd95b684ca60e44ef79a453a712f5cc'
-SESSION_STRING='1ApWapzMBux5U2Gy41xwCBFxFnxdk5MGiqCN_R-w6p_hcueuQ3P0ISxOLqwWJzB1hVm2tF-4Xk3q3JfjCaVbdOC0msF9FPqKqyZW80JOQZ9JM8bpG8KswMXtV-qa5z3sehtLhhflKF265zxDjKnXVte14hkc6E1ZyGhzL5XiRUDhSnvsqzavWXTHAkIS4Yj5MiaIIyniHRaBvLrhHFP6Q_7e639ZXq9auIa2CXZ56QxE8zwCfOtQDd5I-c3ksiQbmDVeAV_dx-4OFTnlK8eCY0CjGpt8KUPdvCmMKf3ROLxuPQGDdebm0vniE_pvyHe_XFypZHYGSi0ppqT_Y_GN80flflMrGT34='
 
 src_channel ='https://t.me/test_tgnews'
 
